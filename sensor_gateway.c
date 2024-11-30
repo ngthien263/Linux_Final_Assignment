@@ -1,113 +1,18 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <errno.h>
-#include <sys/socket.h>     //  Chứa cấu trúc cần thiết cho socket. 
-#include <netinet/in.h>     //  Thư viện chứa các hằng số, cấu trúc khi sử dụng địa chỉ trên internet
-#include <arpa/inet.h>
-#include <unistd.h>
-#include <pthread.h>
-#include <sys/wait.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <sqlite3.h>
-#include <fcntl.h>
-#define LISTEN_BACKLOG 50
-#define BUFF_SIZE 256
-#define FIFO_FILE   "./logfifo"
-#define LOG_FILE    "gateway.log"
+#include "sensor.h"
 #define handle_error(msg) \
     do { perror(msg); exit(EXIT_FAILURE); } while (0)
-
-#define TEMP_THRESHOLD 30
+node* head = NULL;
+pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+int sequenceNum = 1;
 pthread_t connect_thr, datamanager_thr, storagemanager_thr;
-struct sockaddr_in clientAddr;
 int portNo, opt;
 pid_t child_pid;
-int sequenceNum = 1;
-pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
-typedef struct data {
-    int id;
-    float temperature;
-    char time[30];
-} data;
-
-/*Khởi tạo danh sách liên kết*/
-typedef struct node {
-    data data;
-    struct node* prev;
-    struct node* next;
-} node;
-node* head = NULL;
-node* makeNode(data inputData) {
-    node* new_node = (node*)malloc(sizeof(node));
-    if (new_node == 0){
-        handle_error("malloc()");
-    }
-    new_node->data = inputData;
-    new_node->next = NULL;
-    new_node->prev = NULL;
-    return new_node;
-}
-
-void pushBack(node** fhead, data inputData) {
-    node* new_node = makeNode(inputData);
-    if(*fhead == NULL) {
-        *fhead = new_node; 
-        return;
-    }
-    node* temp = *fhead;
-    while(temp->next != NULL) {
-        temp = temp->next;
-    }
-    temp->next = new_node;
-    new_node->prev = temp;
-    new_node->next = NULL;
-}
-
-/*Đọc data từ socket*/
-data readSensorData(int new_socket_fd) {
-    int numb_read;
-    char recvbuff[BUFF_SIZE];
-    data recvData;
-    memset(recvbuff, '0', BUFF_SIZE);
-    if (read(new_socket_fd, recvbuff, BUFF_SIZE) == -1)
-            handle_error("read()");
-    //Phân tích chuỗi đọc được từ data thành các trường trong recvData
-    sscanf(recvbuff, "%[^-] - ID: %d\nTemp: %f\n", recvData.time, 
-                                                   &recvData.id, 
-                                                   &recvData.temperature);
-    return recvData;
-}
-
-void writetoFifo (char* buffer) {
-    int ffd = open(FIFO_FILE, O_WRONLY);
-    if (ffd == -1)
-        handle_error("open()");
-    write(ffd, buffer, strlen(buffer));
-    close(ffd);
-}
-
-int connectSocket(int server_fd) {
-    if (listen(server_fd, LISTEN_BACKLOG) == -1)
-        handle_error("listen()");
-    socklen_t clientLen  = sizeof(clientAddr);
-    printf("Server is listening at port : %d \n....\n",portNo);
-    int new_socket_fd = accept(server_fd, (struct sockaddr*)&clientAddr, &clientLen);
-    if (new_socket_fd == -1)
-        handle_error("accept()");
-    printf("Connected");
-    return new_socket_fd;
-}
-
-
-
 /*Hàm xử lý Connecting thread*/
 void* connectThrHandler(void* args) {
     int server_fd = *((int*)args);
-    data recv_data;
+    sensor_data_t recv_data;
     char buffer[BUFF_SIZE];
-    int new_socket_fd = connectSocket(server_fd);
+    int new_socket_fd = connectSocket(server_fd, portNo);
     open(FIFO_FILE, O_WRONLY);
     while (1) {  
         pthread_mutex_lock(&lock);
@@ -127,52 +32,6 @@ void* connectThrHandler(void* args) {
         pthread_mutex_unlock(&lock);
     }
     pthread_exit(NULL);
-}
-void dataMngReadSensorMap() {
-    char buffer[BUFF_SIZE];
-    int ssmap_fd = open("sensor.map", O_CREAT | O_RDONLY, 0666);
-    if (ssmap_fd == -1) {
-        handle_error("open()");
-    }
-    ssize_t byte_read = read(ssmap_fd, buffer, BUFF_SIZE);
-    if (byte_read < 0) {
-        handle_error("read()");
-    }
-    
-}
-
-void dataMngLog(float avgTemp, node* temp) {
-    char buffer[BUFF_SIZE];
-    if (temp->data.id < 0) { 
-        // log nếu nhận được sensor id không hợp lệ
-        snprintf(buffer, BUFF_SIZE, "%d. %s Received sensor data with invalid sensor node ID %d\n", sequenceNum, 
-                                                                                                   temp->data.time, 
-                                                                                                   temp->data.id);
-        printf("%s\n", buffer); 
-        writetoFifo(buffer); 
-        sequenceNum++;
-        
-    } else {
-        if (temp->data.temperature < avgTemp) { 
-            // log thông báo nhiệt độ quá lạnh
-            snprintf(buffer, BUFF_SIZE, "%d. %s The sensor node with ID %d reports it's too cold (avgtemperature = %.2f)\n",  sequenceNum, 
-                                                                                                                            temp->data.time, 
-                                                                                                                            temp->data.id,
-                                                                                                                            avgTemp);
-            printf("%s\n", buffer);
-            writetoFifo(buffer);
-            sequenceNum++;  
-        } else if (temp->data.temperature > avgTemp) { 
-            // log thông báo nhiệt độ quá nóng
-            snprintf(buffer, BUFF_SIZE, "%d. %s The sensor node with ID %d reports it's too hot (avgtemperature = %.2f)\n",   sequenceNum, 
-                                                                                                                            temp->data.time, 
-                                                                                                                            temp->data.id,
-                                                                                                                            avgTemp);
-            printf("%s\n", buffer); 
-            writetoFifo(buffer);
-            sequenceNum++;
-        }
-    }
 }
 
 /* Hàm xử lý Data Manager thread */
@@ -210,62 +69,9 @@ void* dataMngThrHandler(void* args) {
     pthread_exit(NULL);
 }
 
-/*Tạo database*/
-sqlite3* connectDB(const char* filename) {
-    char buffer[BUFF_SIZE];
-    sqlite3* db;
-    int db_fd = sqlite3_open(filename, &db);
-    if(db_fd) { 
-        printf("Unable to connect to SQL server: %s\n", sqlite3_errmsg(db)); 
-        snprintf(buffer, BUFF_SIZE, "%d. Unable to connect to SQL server\n", sequenceNum);
-        writetoFifo(buffer);
-        sequenceNum++;
-        return NULL; 
-    } 
-    else { 
-        printf("Connection to SQL server established\n");
-        snprintf(buffer, BUFF_SIZE, "%d. Connection to SQL server established\n", sequenceNum);
-        writetoFifo(buffer);
-        sequenceNum++;
-    }
-    return db;
-} 
-
-int createTable(sqlite3* db) {
-    const char *sql = "CREATE TABLE IF NOT EXISTS SensorData ("
-                      "id INTEGER," 
-                      "time TEXT," 
-                      "temperature REAL);";
-    char* errMsg = 0;
-    int rc = sqlite3_exec(db, sql, NULL, 0, &errMsg);
-    if (rc != SQLITE_OK) {
-        printf("SQL error: %s\n", errMsg); 
-        sqlite3_free(errMsg); 
-        return rc;
-    } else {
-        printf("New table SensorData created\n");
-    }
-    return SQLITE_OK;
-}
-
-int insertDataFromList(sqlite3 *db, node *temp) {
-    char *errMsg = 0;
-    char sql[256];
-    int rc;
-        printf("%s, %d, %f\n", temp->data.time, temp->data.id,  temp->data.temperature);
-        sprintf(sql, "INSERT OR REPLACE INTO SensorData (time, id, temperature) VALUES ('%s', %d, %.2f);",
-                temp->data.time, temp->data.id, temp->data.temperature);
-        rc = sqlite3_exec(db, sql, NULL, 0, &errMsg);
-        if (rc != SQLITE_OK) {
-            printf("SQL error: %s\n", errMsg);
-            sqlite3_free(errMsg);
-        }
-    return SQLITE_OK;
-}
-
 /*Hàm xử lý Storage Manager thread*/
 void* storageMngThrHandler(void* args) {
-    sqlite3* db = connectDB("sensordata.db");
+    sqlite3* db = databaseInit("sensordata.db");
     createTable(db);
     node* temp = head;
     while (1) {
@@ -284,7 +90,7 @@ void* storageMngThrHandler(void* args) {
 }
 
 int main(int argc, const char* argv[]) {
-    int server_fd, new_socket_fd;
+    int server_fd;
     int status;
     struct sockaddr_in serv_addr;
     char buffer[BUFF_SIZE];
@@ -303,6 +109,7 @@ int main(int argc, const char* argv[]) {
             }
 
             while (1) {
+                //Viết vào  file log
                 ssize_t bytes_read = read(ffd, buffer, sizeof(buffer) - 1);
                 if (bytes_read > 0) {
                     buffer[bytes_read] = '\0';
@@ -323,43 +130,32 @@ int main(int argc, const char* argv[]) {
                 portNo = atoi(argv[1]);
             }
 
-            memset(&serv_addr, '0', sizeof(struct sockaddr_in));
-            memset(&clientAddr, '0', sizeof(struct sockaddr_in));
-
             /* Khởi tạo socket */
-            server_fd = socket(AF_INET, SOCK_STREAM, 0);
-            if (server_fd == -1)
-                handle_error("socket()");
-
-            // Ngăn lỗi: “address already in use”
-            if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt)) == -1)
-                handle_error("setsockopt()");
-
+            memset(&serv_addr, '0', sizeof(struct sockaddr_in));
             serv_addr.sin_family = AF_INET;
             serv_addr.sin_port = htons(portNo);
             serv_addr.sin_addr.s_addr = INADDR_ANY;
 
-            if (bind(server_fd, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) == -1)
-                handle_error("bind()");
-
+            server_fd = socketInit(server_fd, serv_addr, opt);
             /* Khởi tạo Thread */
             int ret;
-            if (ret = pthread_create(&connect_thr, NULL, &connectThrHandler, &server_fd)) {
+            if ((ret = pthread_create(&connect_thr, NULL, &connectThrHandler, &server_fd))) {
                 printf("pthread_create() error number=%d\n", ret);
                 return -1;
             }
+            
             pthread_join(connect_thr, NULL);
-            if (ret = pthread_create(&datamanager_thr, NULL, &dataMngThrHandler, NULL)) {
+            if ((ret = pthread_create(&datamanager_thr, NULL, &dataMngThrHandler, NULL))) {
                 printf("pthread_create() error number=%d\n", ret);
                 return -1;
             }
             pthread_join(datamanager_thr, NULL);
-            if (ret = pthread_create(&storagemanager_thr, NULL, &storageMngThrHandler, NULL)) {
+            if ((ret = pthread_create(&storagemanager_thr, NULL, &storageMngThrHandler, NULL))) {
                 printf("pthread_create() error number=%d\n", ret);
                 return -1;
             }
             pthread_join(storagemanager_thr, NULL);  
-
+            wait(&status);
         }           
     }
     return 0; 
