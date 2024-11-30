@@ -41,7 +41,7 @@ void chat_func(int server_fd){
     char sendbuff[BUFF_SIZE];
     sensor_node_t sensor;
     int ret;
-    int id = 3;
+    int id = 2;
 
     while(id != 0){
         memset(&sendbuff, '0', BUFF_SIZE);

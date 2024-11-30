@@ -1,6 +1,6 @@
 .PHONY := all clean
 all: 
-	gcc -o sensor_gateway sensor_gateway.c -pthread
+	gcc -o sensor_gateway sensor_gateway.c -pthread -lsqlite3
 	gcc -o sensor_node sensor_node.c
 
 clean:

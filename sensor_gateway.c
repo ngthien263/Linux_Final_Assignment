@@ -7,8 +7,10 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <sys/wait.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sqlite3.h>
 #include <fcntl.h>
 #define LISTEN_BACKLOG 50
 #define BUFF_SIZE 256
@@ -64,12 +66,12 @@ void pushBack(node** fhead, data inputData) {
 }
 
 /*Đọc data từ socket*/
-data readSensorData(int newSocketFd) {
+data readSensorData(int new_socket_fd) {
     int numb_read;
     char recvbuff[BUFF_SIZE];
     data recvData;
     memset(recvbuff, '0', BUFF_SIZE);
-    if (read(newSocketFd, recvbuff, BUFF_SIZE) == -1)
+    if (read(new_socket_fd, recvbuff, BUFF_SIZE) == -1)
             handle_error("read()");
     //Phân tích chuỗi đọc được từ data thành các trường trong recvData
     sscanf(recvbuff, "%[^-] - ID: %d\nTemp: %f\n", recvData.time, 
@@ -91,11 +93,11 @@ int connectSocket(int server_fd) {
         handle_error("listen()");
     socklen_t clientLen  = sizeof(clientAddr);
     printf("Server is listening at port : %d \n....\n",portNo);
-    int newSocketFd = accept(server_fd, (struct sockaddr*)&clientAddr, &clientLen);
-    if (newSocketFd == -1)
+    int new_socket_fd = accept(server_fd, (struct sockaddr*)&clientAddr, &clientLen);
+    if (new_socket_fd == -1)
         handle_error("accept()");
     printf("Connected");
-    return newSocketFd;
+    return new_socket_fd;
 }
 
 
@@ -105,18 +107,18 @@ void* connectThrHandler(void* args) {
     int server_fd = *((int*)args);
     data recv_data;
     char buffer[BUFF_SIZE];
-    int newSocketFd = connectSocket(server_fd);
+    int new_socket_fd = connectSocket(server_fd);
     open(FIFO_FILE, O_WRONLY);
     while (1) {  
         pthread_mutex_lock(&lock);
-        recv_data = readSensorData(newSocketFd); 
+        recv_data = readSensorData(new_socket_fd); 
         if (recv_data.id == 0) {
             pthread_mutex_unlock(&lock);
             pthread_exit(NULL);
         }
 		pushBack(&head, recv_data);
         //log thông báo có sensor tạo kết nối
-        snprintf(buffer, BUFF_SIZE, "%d. %s A sensor node with ID %d has opened a new connection", sequenceNum, 
+        snprintf(buffer, BUFF_SIZE, "%d. %s A sensor node with ID %d has opened a new connection\n", sequenceNum, 
                                                                                                     recv_data.time, 
                                                                                                     recv_data.id);
         printf("%s\n", buffer);
@@ -126,12 +128,24 @@ void* connectThrHandler(void* args) {
     }
     pthread_exit(NULL);
 }
+void dataMngReadSensorMap() {
+    char buffer[BUFF_SIZE];
+    int ssmap_fd = open("sensor.map", O_CREAT | O_RDONLY, 0666);
+    if (ssmap_fd == -1) {
+        handle_error("open()");
+    }
+    ssize_t byte_read = read(ssmap_fd, buffer, BUFF_SIZE);
+    if (byte_read < 0) {
+        handle_error("read()");
+    }
+    
+}
 
 void dataMngLog(float avgTemp, node* temp) {
     char buffer[BUFF_SIZE];
     if (temp->data.id < 0) { 
         // log nếu nhận được sensor id không hợp lệ
-        snprintf(buffer, BUFF_SIZE, "%d. %s Received sensor data with invalid sensor node ID %d", sequenceNum, 
+        snprintf(buffer, BUFF_SIZE, "%d. %s Received sensor data with invalid sensor node ID %d\n", sequenceNum, 
                                                                                                    temp->data.time, 
                                                                                                    temp->data.id);
         printf("%s\n", buffer); 
@@ -141,7 +155,7 @@ void dataMngLog(float avgTemp, node* temp) {
     } else {
         if (temp->data.temperature < avgTemp) { 
             // log thông báo nhiệt độ quá lạnh
-            snprintf(buffer, BUFF_SIZE, "%d. %s The sensor node with ID %d reports it's too cold (avgtemperature = %.2f)",  sequenceNum, 
+            snprintf(buffer, BUFF_SIZE, "%d. %s The sensor node with ID %d reports it's too cold (avgtemperature = %.2f)\n",  sequenceNum, 
                                                                                                                             temp->data.time, 
                                                                                                                             temp->data.id,
                                                                                                                             avgTemp);
@@ -150,7 +164,7 @@ void dataMngLog(float avgTemp, node* temp) {
             sequenceNum++;  
         } else if (temp->data.temperature > avgTemp) { 
             // log thông báo nhiệt độ quá nóng
-            snprintf(buffer, BUFF_SIZE, "%d. %s The sensor node with ID %d reports it's too hot (avgtemperature = %.2f)",   sequenceNum, 
+            snprintf(buffer, BUFF_SIZE, "%d. %s The sensor node with ID %d reports it's too hot (avgtemperature = %.2f)\n",   sequenceNum, 
                                                                                                                             temp->data.time, 
                                                                                                                             temp->data.id,
                                                                                                                             avgTemp);
@@ -180,9 +194,9 @@ void* dataMngThrHandler(void* args) {
         }
         avgTemp = avgTemp / division;
 
-        // Viết log vào Fifo cho từng node
+        // Viết log vào Fifo 
         temp = head; 
-        while (temp != NULL) {     
+        while (1) {     
             dataMngLog(avgTemp, temp);
             temp = temp->next;
             if (temp->next == NULL) {
@@ -196,18 +210,82 @@ void* dataMngThrHandler(void* args) {
     pthread_exit(NULL);
 }
 
+/*Tạo database*/
+sqlite3* connectDB(const char* filename) {
+    char buffer[BUFF_SIZE];
+    sqlite3* db;
+    int db_fd = sqlite3_open(filename, &db);
+    if(db_fd) { 
+        printf("Unable to connect to SQL server: %s\n", sqlite3_errmsg(db)); 
+        snprintf(buffer, BUFF_SIZE, "%d. Unable to connect to SQL server\n", sequenceNum);
+        writetoFifo(buffer);
+        sequenceNum++;
+        return NULL; 
+    } 
+    else { 
+        printf("Connection to SQL server established\n");
+        snprintf(buffer, BUFF_SIZE, "%d. Connection to SQL server established\n", sequenceNum);
+        writetoFifo(buffer);
+        sequenceNum++;
+    }
+    return db;
+} 
+
+int createTable(sqlite3* db) {
+    const char *sql = "CREATE TABLE IF NOT EXISTS SensorData ("
+                      "id INTEGER," 
+                      "time TEXT," 
+                      "temperature REAL);";
+    char* errMsg = 0;
+    int rc = sqlite3_exec(db, sql, NULL, 0, &errMsg);
+    if (rc != SQLITE_OK) {
+        printf("SQL error: %s\n", errMsg); 
+        sqlite3_free(errMsg); 
+        return rc;
+    } else {
+        printf("New table SensorData created\n");
+    }
+    return SQLITE_OK;
+}
+
+int insertDataFromList(sqlite3 *db, node *temp) {
+    char *errMsg = 0;
+    char sql[256];
+    int rc;
+        printf("%s, %d, %f\n", temp->data.time, temp->data.id,  temp->data.temperature);
+        sprintf(sql, "INSERT OR REPLACE INTO SensorData (time, id, temperature) VALUES ('%s', %d, %.2f);",
+                temp->data.time, temp->data.id, temp->data.temperature);
+        rc = sqlite3_exec(db, sql, NULL, 0, &errMsg);
+        if (rc != SQLITE_OK) {
+            printf("SQL error: %s\n", errMsg);
+            sqlite3_free(errMsg);
+        }
+    return SQLITE_OK;
+}
 
 /*Hàm xử lý Storage Manager thread*/
 void* storageMngThrHandler(void* args) {
-    // while (1) {
-    //     pthread_mutex_lock(&lock);
-        
-    //     pthread_mutex_unlock(&lock);
-    // }
+    sqlite3* db = connectDB("sensordata.db");
+    createTable(db);
+    node* temp = head;
+    while (1) {
+        pthread_mutex_lock(&lock);
+        insertDataFromList(db, temp);
+        temp = temp->next;
+        if(temp->next == NULL) {
+            insertDataFromList(db, temp);
+            pthread_mutex_unlock(&lock);
+            pthread_exit(NULL);
+        }
+        pthread_mutex_unlock(&lock);     
+    }
+    sqlite3_close(db); 
+    pthread_exit(NULL);
 }
 
 int main(int argc, const char* argv[]) {
-    int server_fd, newSocketFd;
+    int server_fd, new_socket_fd;
+    int status;
     struct sockaddr_in serv_addr;
     char buffer[BUFF_SIZE];
     mkfifo(FIFO_FILE, 0666);
@@ -216,9 +294,8 @@ int main(int argc, const char* argv[]) {
         if (child_pid == 0) {
             int ffd = open(FIFO_FILE, O_RDONLY);
             if (ffd == -1) {
-                handle_error("open FIFO");
+                handle_error("open()");
             }
-
             // Tạo file log
             int log_fd = open(LOG_FILE, O_CREAT | O_WRONLY | O_APPEND | O_TRUNC, 0666);
             if (log_fd == -1) {
@@ -232,14 +309,11 @@ int main(int argc, const char* argv[]) {
                     if (write(log_fd, buffer, bytes_read) == -1) {
                         handle_error("write()");
                     }
-                    if (write(log_fd, "\n", 1) == -1) {
-                        handle_error("write()");
-                    }
                 }
             }
             close(log_fd);
             close(ffd);
-
+            exit(status);
         } else if (child_pid > 0) {
             /* Đọc portnumber trên command line */
             if (argc < 2) {
@@ -285,6 +359,7 @@ int main(int argc, const char* argv[]) {
                 return -1;
             }
             pthread_join(storagemanager_thr, NULL);  
+
         }           
     }
     return 0; 
