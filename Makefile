@@ -7,9 +7,10 @@ SRC_DIR := $(CUR_PATH)/source
 OBJ_DIR := $(CUR_PATH)/obj
 LIB_DIR := $(CUR_PATH)/lib
 CFLAGS = -I$(INC_DIR) -Wall
-
-
 CC = gcc
+
+make_dir:
+	mkdir -p $(LIB_DIR) $(OBJ_DIR) $(BIN_DIR)
 create_obj:
 	$(CC) $(CFLAGS) -c -fPIC $(SRC_DIR)/database.c -o $(OBJ_DIR)/database.o
 	$(CC) $(CFLAGS) -c -fPIC $(SRC_DIR)/linkedList.c -o $(OBJ_DIR)/linkedList.o
@@ -24,7 +25,7 @@ create_shared_lib:
 install_lib:
 	sudo cp -f $(LIB_DIR)/lib$(PRJ_NAME).so /usr/lib
 
-all: create_obj create_shared_lib install_lib
+all: make_dir create_obj create_shared_lib install_lib
 	gcc  $(CUR_PATH)/sensor_gateway.o -L$(LIB_DIR) -l$(PRJ_NAME) -o $(BIN_DIR)/sensor_gateway -lpthread -lsqlite3
 	gcc  $(CUR_PATH)/sensor_node.o -L$(LIB_DIR) -l$(PRJ_NAME) -o $(BIN_DIR)/sensor_node -lpthread -lsqlite3
 
