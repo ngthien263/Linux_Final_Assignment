@@ -1,19 +1,16 @@
 #ifndef LINKEDLIST_H
 #define LINKEDLIST_H
+#include <stdbool.h>
 #include <stdlib.h>
-typedef struct {
-    int id;
-    float temperature;
-    char time[30];
-} sensor_data_t;
+#include "sensor_types.h"
 
 typedef struct node {
-    sensor_data_t data;
+    sensor_info_t data;
     struct node* prev;
     struct node* next;
 } node;
 
-node* makeNode(sensor_data_t inputData);
-void pushBack(node** fhead, sensor_data_t inputData);
-
+node* makeNode(sensor_info_t inputData);
+void pushBack(node** fhead, sensor_info_t inputData);
+int popFront(node** fhead, sensor_info_t* outputData);
 #endif // LINKEDLIST_H
