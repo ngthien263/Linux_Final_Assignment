@@ -14,8 +14,8 @@ sensor_info_t* stimulate_sensor_info(sensor_info_t* self){
     struct timeval tv;
     gettimeofday(&tv, NULL);
     srand((unsigned int)(tv.tv_sec ^ tv.tv_usec));
-    self->data.temperature = rand() % 10 + 1;
-    self->data.humidity = rand() % MAX_SENSORS + 1;
+    self->data.temperature = rand() % 100 + 1;
+    self->data.humidity = rand() % 100 + 1;
     get_time(self->timestamp);
     return self;
 }
