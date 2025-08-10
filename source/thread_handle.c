@@ -1,9 +1,11 @@
 #include <fcntl.h>      
 #include <stdbool.h>
 #include <unistd.h>    
+#include <string.h>
 #include "common.h"
 #include "thread_handle.h"
 #include "sensor_reader.h"
+#include "database.h"
 extern sensor_info_t* sensors[];
 
 void* connect_thread_handler(void* args){
@@ -30,45 +32,83 @@ void* connect_thread_handler(void* args){
     close(f_fd);
     pthread_exit(NULL);
 }
-
+float avg_temp;
+float avg_humid;
 
 void* data_manager_thread_handle(void* args){
     thr_handle_t* handle = (thr_handle_t*)args;
     char buffer[1024];
     int f_fd = open("./log_fifo", O_WRONLY);
-    static float avg_temp = 0.;
-    static float avg_humid = 0.;
-    static int division = 0;
+    if(f_fd < 0)   handle_error("open fifo");
+    
+    struct storage {int id; float temp; float humid; int division; bool new_data;};
+    struct storage storage_arr[MAX_SENSORS];
     while(1){
         pthread_mutex_lock(&handle->mlock);
         for(int i = 0; i < MAX_SENSORS; i++){
-            if(sensors[i] && sensors[i]->state.new_data == false && sensors[i]->state.connected == true){
-                avg_temp  += sensors[i]->data.temperature;
-                avg_humid += sensors[i]->data.humidity;
-                division++;
+            if(sensors[i] && !sensors[i]->state.new_data && sensors[i]->state.connected){
+                storage_arr[i].id = sensors[i]->id;
+                storage_arr[i].temp += sensors[i]->data.temperature;
+                storage_arr[i].humid += sensors[i]->data.humidity;
+                storage_arr[i].division++;
+                storage_arr[i].new_data = false;
             }
-        }
-        if(division > 0){
-            avg_temp /= division;
-            avg_humid /= division;
         }
         pthread_mutex_unlock(&handle->mlock);
         int len = 0;
         for(int i = 0; i < MAX_SENSORS; i++){
-            if(sensors[i] && sensors[i]->state.connected == true && sensors[i]->state.new_data == false){
-                if(sensors[i]->data.temperature > TEMP_UPPER_LIMIT) {
-                    len = sprintf(buffer, "[Data] Sensor %d too hot (avg=%.2f)\n", sensors[i]->id, avg_temp); 
-                }         
-                else if (sensors[i]->data.temperature < TEMP_LOWER_LIMIT){
-                    len = sprintf(buffer, "[Data] Sensor %d too cold (avg=%.2f)\n", sensors[i]->id, avg_temp);    
-                } 
-                else 
-                    len = sprintf(buffer, "[Data] Normal temperature (avg = %.2f)",  avg_temp);   
-                write(f_fd, buffer, len);   
-                sensors[i]->state.new_data = true; 
+            if(storage_arr[i].division > 0 && !storage_arr[i].new_data){
+                avg_temp = storage_arr[i].temp/storage_arr[i].division;
+                avg_humid = storage_arr[i].temp/storage_arr[i].division;
+                if(avg_temp > TEMP_UPPER_LIMIT){
+                    len = sprintf(buffer, "[Data] Sensor %d: Too hot (avg=%.2f)\n", storage_arr[i].id, avg_temp); 
+                } else if (avg_temp < TEMP_LOWER_LIMIT){
+                    len = sprintf(buffer, "[Data] Sensor %d: Too cold (avg=%.2f)\n", storage_arr[i].id, avg_temp);    
+                } else 
+                    len = sprintf(buffer, "[Data] Sensor %d: Normal temperature (avg = %.2f)\n", storage_arr[i].id, avg_temp);   
+                
+                if(write(f_fd, buffer, len) < 0)
+                    handle_error("write");
+                storage_arr[i].new_data = true;    
             }
         }
+        pthread_mutex_lock(&handle->mlock);
+        for(int i = 0; i < MAX_SENSORS; i++){
+            if(storage_arr[i].new_data)
+                sensors[i]->state.new_data = true; 
+        }
+        pthread_mutex_unlock(&handle->mlock);    
     }
     close(f_fd);
+    pthread_exit(NULL);
+}
+
+void* database_thread(void* args) {
+    thr_handle_t* handle = (thr_handle_t*)args;
+
+    if (!db_init("./sensors.db")) {
+        perror("db_init");
+        pthread_exit(NULL);
+    }
+
+    while (1) {
+        pthread_mutex_lock(&handle->mlock);
+        for (int i = 0; i < MAX_SENSORS; i++) {
+            if (sensors[i] && sensors[i]->state.connected) {
+                db_save_state(
+                    sensors[i]->id,
+                    sensors[i]->timestamp,
+                    sensors[i]->data.temperature,
+                    sensors[i]->data.humidity,
+                    sensors[i]->data.temperature 
+                );
+            }
+        }
+        pthread_mutex_unlock(&handle->mlock);
+
+        sleep(1); 
+    }
+
+    db_close();
     pthread_exit(NULL);
 }

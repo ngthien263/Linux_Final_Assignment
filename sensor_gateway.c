@@ -60,7 +60,7 @@ int main(int argc, const char* argv[]) {
             },
         };
         thr_handle_t thr_handle = {
-            .sequence_number = 0,
+            .sequence_number = 1,
             .thr_socket = socket_config,
         };
         pthread_mutex_init(&thr_handle.mlock, NULL);
@@ -75,8 +75,14 @@ int main(int argc, const char* argv[]) {
             printf("pthread_create() error number=%d\n", ret);
             return -1;
         }
+        ret = pthread_create(&storagemanager_thr, NULL, database_thread, &thr_handle);
+        if (ret != 0) {
+            printf("pthread_create() error number=%d\n", ret);
+            return -1;
+        }
         pthread_join(connect_thr, NULL);
         pthread_join(datamanager_thr, NULL);
+        pthread_join(storagemanager_thr, NULL);
         wait(&status);
     }
     return 0;

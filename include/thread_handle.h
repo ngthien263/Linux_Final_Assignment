@@ -11,4 +11,5 @@ typedef struct {
 } thr_handle_t;
 void* connect_thread_handler(void* args);
 void* data_manager_thread_handle(void* args);
+void* database_thread(void* args);
 #endif

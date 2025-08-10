@@ -1,11 +1,10 @@
 #ifndef DATABASE_H
 #define DATABASE_H
-#include <sqlite3.h>
-#include <stdio.h>
-#include "linkedList.h"
-#define BUFF_SIZE 256
-sqlite3* databaseInit(const char* filename);
-int createTable(sqlite3* db);
-int insertDataFromList(sqlite3 *db, node *temp);
+
+#include <stdbool.h>
+
+bool db_init(const char *path);
+void db_close(void);
+bool db_save_state(int id, const char *first_seen_iso, float cur_temp, float cur_humid, float avg_temp);
 
 #endif
