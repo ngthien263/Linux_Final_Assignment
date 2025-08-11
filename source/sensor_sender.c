@@ -52,4 +52,3 @@ void sensor_send_message(sensor_info_t** sensors, int server_fd) {
         printf("%s", buff);
     }
 }
-

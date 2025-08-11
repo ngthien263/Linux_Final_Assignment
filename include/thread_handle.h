@@ -6,8 +6,10 @@
 #include "sensor_types.h"
 typedef struct {
     pthread_mutex_t mlock;
+    pthread_cond_t cvar;
     int sequence_number;
     socket_t thr_socket;
+    
 } thr_handle_t;
 void* connect_thread_handler(void* args);
 void* data_manager_thread_handle(void* args);

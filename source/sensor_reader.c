@@ -31,10 +31,6 @@ static void __read_fifo(int socket_fd){
                                                         &recv_info.id,
                                                         &recv_info.data.temperature,
                                                         &recv_info.data.humidity);
-        printf("%s - ID: %dTemp: %f Humid: %f\n", recv_info.timestamp,
-                                                  recv_info.id,
-                                                  recv_info.data.temperature,
-                                                  recv_info.data.humidity);
         pushBack(&head, recv_info);
         line = strtok(NULL, "\n");
     }

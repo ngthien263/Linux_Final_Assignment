@@ -17,6 +17,7 @@ sensor_info_t* sensors[MAX_SENSORS] = {NULL};
 pthread_t connect_thr, datamanager_thr, storagemanager_thr;
 pid_t child_pid;
 int main(int argc, const char* argv[]) {
+    signal(SIGCHLD, SIG_IGN);
     int status;
     char buffer[4096];
     if (mkfifo("./log_fifo", 0666) < 0)
@@ -26,7 +27,7 @@ int main(int argc, const char* argv[]) {
         handle_error("fork");
     }
     if(child_pid == 0) {
-        int f_fd = open("./log_fifo", O_RDWR);
+        int f_fd = open("./log_fifo", O_RDONLY);
         if (f_fd < 0) handle_error("open fifo");
         int log_fd = open("gateway.log", O_CREAT | O_WRONLY | O_APPEND , 0666);
         if (log_fd < 0) handle_error("open log");

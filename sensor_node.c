@@ -36,7 +36,7 @@ int main(int argc, const char* argv[]) {
         handle_error("connect()");
     while(1){
         sensor_send_message(sensors, server_fd);    
-        sleep(3);
+        sleep(5);
     }
     for (int i = 0; i < MAX_SENSORS; ++i) {
         free(sensors[i]);
