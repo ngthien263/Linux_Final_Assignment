@@ -1,5 +1,15 @@
 #ifndef SENSOR_SENDER_H
 #define SENSOR_SENDER_H
 #include "sensor_types.h"
-void sensor_send_message(sensor_info_t** sensors, int server_fd);
+
+typedef struct sensor_node {
+    sensor_info_t info;
+    struct sensor_node* next;
+} sensor_node_t;
+sensor_info_t sensor_init(int sensor_id);
+sensor_node_t* sensor_create(int sensor_id);
+void add_sensor(sensor_node_t** head_sensor, int sensor_id);
+void rm_sensor(sensor_node_t** head_sensor, int sensor_id);
+void dump_sensor(sensor_node_t** head_sensor);
+void sensor_send_message(sensor_node_t** sensor_head, int server_fd);
 #endif

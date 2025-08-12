@@ -15,11 +15,11 @@ void pushBack(node** fhead, sensor_info_t inputData) {
         return;
     }
     node* temp = *fhead;
-    while (temp->next != NULL) {
+    while (temp->next == NULL) {
         temp = temp->next;
     }
     temp->next = new_node;
-    new_node->prev = temp;
+
 }
 
 int popFront(node** fhead, sensor_info_t* outputData) {

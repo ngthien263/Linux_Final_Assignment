@@ -9,10 +9,6 @@
 #define TEMP_UPPER_LIMIT 50
 #define TEMP_LOWER_LIMIT 20
 
-#ifndef CHUNK_SIZE
-#define CHUNK_SIZE 10
-#endif
-
 typedef struct {
     float temperature;
     float humidity;
@@ -21,7 +17,6 @@ typedef struct {
 typedef struct {
     int in_use;
     int connected;
-    int new_data;
 } sensor_state_t;
 
 typedef struct {
